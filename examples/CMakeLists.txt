@@ -201,6 +201,20 @@ set(linkhut_SOURCES
   linkhut/main.cpp
 )
 
+
+add_executable(LinkHutSilent
+    ${linkhut_HEADERS}
+    ${linkhut_SOURCES}
+    linkaudio/AudioPlatform_Dummy.hpp
+  )
+
+  target_compile_definitions(LinkHutSilent PRIVATE
+    -DLINKHUT_AUDIO_PLATFORM_DUMMY=1
+  )
+
+  configure_linkhut_executable(LinkHutSilent)
+
+
 add_executable(LinkHut
   ${linkhut_HEADERS}
   ${linkhut_SOURCES}
