@@ -120,6 +120,7 @@ template <typename PeerCountCallback,
   typename TempoCallback,
   typename StartStopStateCallback,
   typename Clock,
+  typename Random,
   typename IoContext>
 class Controller
 {
@@ -133,7 +134,7 @@ public:
     : mTempoCallback(std::move(tempoCallback))
     , mStartStopStateCallback(std::move(startStopStateCallback))
     , mClock(std::move(clock))
-    , mNodeId(NodeId::random())
+    , mNodeId(NodeId::random<Random>())
     , mSessionId(mNodeId)
     , mSessionState(detail::initSessionState(tempo, mClock))
     , mClientState(detail::initClientState(mSessionState))
@@ -178,6 +179,9 @@ public:
       mIo->async([this, bEnable] {
         if (bEnable)
         {
+          // Process the pending client states to make sure we don't push one after we
+          // have joined a running session
+          mRtClientStateSetter.processPendingClientStates();
           // Always reset when first enabling to avoid hijacking
           // tempo in existing sessions
           resetState();
@@ -491,9 +495,10 @@ private:
     const bool sessionIdChanged = mSessionId != session.sessionId;
     mSessionId = session.sessionId;
 
-    // Prevent passing the start stop state of the previous session to the new one.
+    // Prevent passing the state of the previous session to the new one.
     if (sessionIdChanged)
     {
+      mRtClientStateSetter.processPendingClientStates();
       resetSessionStartStopState();
     }
 
@@ -510,7 +515,7 @@ private:
 
   void resetState()
   {
-    mNodeId = NodeId::random();
+    mNodeId = NodeId::random<Random>();
     mSessionId = mNodeId;
 
     const auto xform = detail::initXForm(mClock);
@@ -551,7 +556,8 @@ private:
     RtClientStateSetter(Controller& controller)
       : mController(controller)
       , mCallbackDispatcher(
-          [this] { processPendingClientStates(); }, detail::kRtHandlerFallbackPeriod)
+          [this] { mController.mIo->async([this]() { processPendingClientStates(); }); },
+          detail::kRtHandlerFallbackPeriod)
     {
     }
 
@@ -563,6 +569,12 @@ private:
         mCallbackDispatcher.invoke();
       }
       return success;
+    }
+
+    void processPendingClientStates()
+    {
+      const auto clientState = buildMergedPendingClientState();
+      mController.handleRtClientState(clientState);
     }
 
   private:
@@ -582,13 +594,6 @@ private:
         }
       }
       return clientState;
-    }
-
-    void processPendingClientStates()
-    {
-      const auto clientState = buildMergedPendingClientState();
-      mController.mIo->async(
-        [this, clientState]() { mController.handleRtClientState(clientState); });
     }
 
     Controller& mController;
